@@ -39,7 +39,9 @@ type reader struct {
 // The ok result indicates whether value was found in the map.
 func (r *reader) Load(key interface{}) (value interface{}, ok bool) {
 	atomic.CompareAndSwapUint64(r.epoch, math.MaxUint64-1, 0)
-	atomic.AddUint64(r.epoch, 1)
+	if atomic.AddUint64(r.epoch, 1)%2 == 0 {
+		panic("evmap: reader used concurrently")
+	}
 	defer atomic.AddUint64(r.epoch, 1)
 	rmap := *(*datamap)(atomic.LoadPointer(r.rmap))
 	val, ok := rmap[key]
