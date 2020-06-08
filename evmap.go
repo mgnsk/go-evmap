@@ -85,6 +85,8 @@ func New() Map {
 
 // Reader registers a reader for the map.
 // The reader must be closed when no longer in use.
+// TODO right now a single reader must be used sync.
+// Multiple readers can be used concurrently.
 func (m *evmap) Reader() Reader {
 	m.mu.Lock()
 	defer m.mu.Unlock()
