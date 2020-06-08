@@ -38,13 +38,11 @@ type reader struct {
 // value is present.
 // The ok result indicates whether value was found in the map.
 func (r *reader) Load(key interface{}) (value interface{}, ok bool) {
+	atomic.CompareAndSwapUint64(r.epoch, math.MaxUint64-1, 0)
 	atomic.AddUint64(r.epoch, 1)
+	defer atomic.AddUint64(r.epoch, 1)
 	rmap := *(*datamap)(atomic.LoadPointer(r.rmap))
 	val, ok := rmap[key]
-	if atomic.AddUint64(r.epoch, 1) == math.MaxUint64-1 {
-		// Safely roll over to 0 without stopping at math.MaxUint64
-		atomic.AddUint64(r.epoch, 2)
-	}
 	return val, ok
 }
 
