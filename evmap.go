@@ -48,7 +48,7 @@ func (r *reader) Load(key interface{}) (value interface{}, ok bool) {
 	return val, ok
 }
 
-// Close unregisters up the reader.
+// Close unregisters the reader.
 func (r *reader) Close() error {
 	atomic.StoreUint64(r.epoch, math.MaxUint64)
 	return nil
@@ -71,6 +71,7 @@ type evmap struct {
 	state uint64
 }
 
+// New creates an empty concurrent map.
 func New() Map {
 	r := make(datamap)
 	w := make(datamap)
@@ -84,6 +85,8 @@ func New() Map {
 	}
 }
 
+// Reader registers a reader for the map.
+// The reader must be closed when no longer in use.
 func (m *evmap) Reader() Reader {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -97,6 +100,8 @@ func (m *evmap) Reader() Reader {
 	return rd
 }
 
+// Store a value into the map. After Store returns,
+// all readers observe the new value.
 func (m *evmap) Store(key, value interface{}) {
 	defer m.sync()
 
