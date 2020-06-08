@@ -11,7 +11,7 @@ import (
 
 func TestMap(t *testing.T) {
 	read := func(r Reader, key string, expectExists bool) {
-		val, exists := r.Read(key)
+		val, exists := r.Load(key)
 		if exists != expectExists {
 			panic(fmt.Sprintln("invalid expect value", exists, "expected:", expectExists))
 		}
@@ -27,8 +27,8 @@ func TestMap(t *testing.T) {
 	defer r.Close()
 
 	// Write some values
-	m.WriteSync("key", "value")
-	m.WriteSync("key2", "value")
+	m.Store("key", "value")
+	m.Store("key2", "value")
 
 	read(r, "key", true)
 	read(r, "key2", true)
@@ -39,7 +39,7 @@ const writeEveryNRead = 1
 const numWriters = 4
 
 // Number of unique keys.
-const n = 1000
+const n = 100
 
 func genKeys() []int {
 	keys := make([]int, n)
@@ -62,7 +62,7 @@ func BenchmarkEvMap(b *testing.B) {
 			for {
 				if total := atomic.LoadUint64(&totalReads); total%writeEveryNRead == 0 {
 					key := keys[total%n]
-					m.WriteSync(key, "value")
+					m.Store(key, "value")
 				}
 			}
 		}()
@@ -75,7 +75,7 @@ func BenchmarkEvMap(b *testing.B) {
 		var exists bool
 		for pb.Next() {
 			key := keys[atomic.AddUint64(&totalReads, 1)%n]
-			res, exists = r.Read(key)
+			res, exists = r.Load(key)
 		}
 		_, _ = res, exists
 	})

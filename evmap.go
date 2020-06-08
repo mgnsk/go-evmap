@@ -7,36 +7,18 @@ import (
 	"unsafe"
 )
 
-// if a single writer (sync) is used, then no mutex needed
-
-// if multi writer (concurrent
-
-// get a reader, i)
-// start reading +1 (odd)
-// finish reading +1 (even)
-
-// swap the atomic pointer for readers
-
-// refresh - swap the pointers, wait for readers counters to get even (all did at least 1 read from the new pointer)
-// write log into old pointer
-
+// Map is a concurrent non-blocking map.
 type Map interface {
 	Reader() Reader
-	// WriteSync writes so that after it returns, all readers observe the new value.
-	WriteSync(key, value interface{})
-	// Sync the map.
-	Sync()
+	// Store writes so that after it returns, all readers observe the new value.
+	Store(key, value interface{})
 }
 
+// Reader is a map reader.
 type Reader interface {
-	Read(key interface{}) (value interface{}, exists bool)
+	Load(key interface{}) (value interface{}, exists bool)
 	Close() error
 }
-
-const (
-	idle uint64 = iota
-	swapping
-)
 
 type datamap map[interface{}]interface{}
 
@@ -52,18 +34,30 @@ type reader struct {
 	rmap  *unsafe.Pointer
 }
 
-func (r *reader) Read(key interface{}) (interface{}, bool) {
+// Load returns the value stored in the map for a key, or nil if no
+// value is present.
+// The ok result indicates whether value was found in the map.
+func (r *reader) Load(key interface{}) (value interface{}, ok bool) {
 	atomic.AddUint64(r.epoch, 1)
 	rmap := *(*datamap)(atomic.LoadPointer(r.rmap))
-	defer atomic.AddUint64(r.epoch, 1)
 	val, ok := rmap[key]
+	if atomic.AddUint64(r.epoch, 1) == math.MaxUint64-1 {
+		// Safely roll over to 0 without stopping at math.MaxUint64
+		atomic.AddUint64(r.epoch, 2)
+	}
 	return val, ok
 }
 
+// Close unregisters up the reader.
 func (r *reader) Close() error {
 	atomic.StoreUint64(r.epoch, math.MaxUint64)
 	return nil
 }
+
+const (
+	idle uint64 = iota
+	swapping
+)
 
 type evmap struct {
 	mu      sync.RWMutex
@@ -103,18 +97,17 @@ func (m *evmap) Reader() Reader {
 	return rd
 }
 
-func (m *evmap) WriteSync(key, value interface{}) {
-	defer m.Sync()
+func (m *evmap) Store(key, value interface{}) {
+	defer m.sync()
 
 	m.mu.Lock()
 	w := *(*datamap)(atomic.LoadPointer(m.w))
 	w[key] = value
 	m.log[key] = value
 	m.mu.Unlock()
-
 }
 
-func (m *evmap) Sync() {
+func (m *evmap) sync() {
 	var newW datamap
 	if atomic.CompareAndSwapUint64(&m.state, idle, swapping) {
 		defer atomic.StoreUint64(&m.state, idle)
