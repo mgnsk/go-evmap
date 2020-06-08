@@ -22,8 +22,6 @@ import (
 
 type Map interface {
 	Reader() Reader
-	// Write the value so that readers may observe a missing value just after Write returns.
-	Write(key, value interface{})
 	// WriteSync writes so that after it returns, all readers observe the new value.
 	WriteSync(key, value interface{})
 	// Sync the map.
@@ -103,15 +101,6 @@ func (m *evmap) Reader() Reader {
 		rmap:  m.r,
 	}
 	return rd
-}
-
-func (m *evmap) Write(key, value interface{}) {
-	panic("unimplemented")
-	//m.mu.Lock()
-	//defer m.mu.Unlock()
-	//w := *(*datamap)(atomic.LoadPointer(m.w))
-	//w[key] = value
-	//m.log[key] = value
 }
 
 func (m *evmap) WriteSync(key, value interface{}) {
