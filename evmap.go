@@ -64,6 +64,7 @@ type evmap struct {
 	epoches []*uint64
 	history map[*uint64]uint64
 	log     datamap
+	cond    *sync.Cond
 
 	r *unsafe.Pointer
 	w *unsafe.Pointer
@@ -77,11 +78,13 @@ func New() Map {
 	w := make(datamap)
 	rPtr := unsafe.Pointer(&r)
 	wPtr := unsafe.Pointer(&w)
+	var syncMu sync.Mutex
 	return &evmap{
 		history: make(map[*uint64]uint64),
 		r:       &rPtr,
 		w:       &wPtr,
 		log:     make(datamap),
+		cond:    sync.NewCond(&syncMu),
 	}
 }
 
@@ -105,7 +108,7 @@ func (m *evmap) Reader() Reader {
 // Store a value into the map. After Store returns,
 // all readers observe the new value.
 func (m *evmap) Store(key, value interface{}) {
-	defer m.sync()
+	defer m.swap()
 
 	m.mu.Lock()
 	w := *(*datamap)(atomic.LoadPointer(m.w))
@@ -114,35 +117,34 @@ func (m *evmap) Store(key, value interface{}) {
 	m.mu.Unlock()
 }
 
-func (m *evmap) sync() {
-	var newW datamap
+// swap will not return before this or any concurrent swap is done.
+func (m *evmap) swap() {
 	if atomic.CompareAndSwapUint64(&m.state, idle, swapping) {
 		defer atomic.StoreUint64(&m.state, idle)
+		defer m.cond.Broadcast()
 
 		m.mu.Lock()
-		newW = *(*datamap)(atomic.SwapPointer(m.r, atomic.SwapPointer(m.w, *m.r)))
+		newW := *(*datamap)(atomic.SwapPointer(m.r, atomic.SwapPointer(m.w, *m.r)))
 		m.mu.Unlock()
 
 		m.wait()
 
 		m.mu.Lock()
-		defer m.mu.Unlock()
 		for k, v := range m.log {
 			newW[k] = v
 			delete(m.log, k)
 		}
+		m.mu.Unlock()
 
 		return
 	}
 
-	// Wait until a concurrent sync is finished.
-	for {
-		m.mu.Lock()
-		m.mu.Unlock()
-		if atomic.LoadUint64(&m.state) == idle {
-			return
-		}
+	// Wait for concurrent swap to finish.
+	m.cond.L.Lock()
+	for atomic.LoadUint64(&m.state) == swapping {
+		m.cond.Wait()
 	}
+	m.cond.L.Unlock()
 }
 
 func (m *evmap) wait() {
