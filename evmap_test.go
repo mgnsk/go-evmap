@@ -53,6 +53,12 @@ var (
 	total                 uint64
 )
 
+func nextKey() int {
+	return keys[atomic.AddUint64(&total, 1)%n]
+}
+
+type benchmark func(b *testing.B)
+
 func BenchmarkEvMap(b *testing.B) {
 	rand.Seed(time.Now().UnixNano())
 
@@ -372,12 +378,6 @@ func runBench(b *testing.B, name string, bgConcurrency int, bg func(), bench fun
 	cancel()
 	wg.Wait()
 }
-
-func nextKey() int {
-	return keys[atomic.AddUint64(&total, 1)%n]
-}
-
-type benchmark func(b *testing.B)
 
 func evMapSingleRead(m Map) benchmark {
 	return func(b *testing.B) {
