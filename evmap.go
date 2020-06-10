@@ -4,7 +4,6 @@ import (
 	"math"
 	"sync"
 	"sync/atomic"
-	"unsafe"
 )
 
 // Map is a concurrent non-blocking map.
@@ -30,8 +29,10 @@ type rwmap struct {
 type readermap map[*reader]uint64
 
 type reader struct {
-	epoch *uint64
-	rmap  *unsafe.Pointer
+	epoch   *uint64
+	flipped *uint64
+	rmap    datamap
+	wmap    datamap
 }
 
 // Load returns the value stored in the map for a key, or nil if no
@@ -43,9 +44,13 @@ func (r *reader) Load(key interface{}) (value interface{}, ok bool) {
 		panic("evmap: reader used concurrently")
 	}
 	defer atomic.AddUint64(r.epoch, 1)
-	rmap := *(*datamap)(atomic.LoadPointer(r.rmap))
-	val, ok := rmap[key]
-	return val, ok
+	switch atomic.LoadUint64(r.flipped) {
+	case 0:
+		value, ok = r.rmap[key]
+	default:
+		value, ok = r.wmap[key]
+	}
+	return
 }
 
 // Close unregisters the reader.
@@ -57,41 +62,35 @@ func (r *reader) Close() error {
 const (
 	idle uint64 = iota
 	swapping
+	writing
 )
 
 type evmap struct {
 	mu      sync.RWMutex
 	epoches []*uint64
+	flipped *uint64
 	history map[*uint64]uint64
 	log     datamap
-	cond    *sync.Cond
 
-	r *unsafe.Pointer
-	w *unsafe.Pointer
+	rmap datamap
+	wmap datamap
 
 	state uint64
 }
 
 // New creates an empty concurrent map.
 func New() Map {
-	r := make(datamap)
-	w := make(datamap)
-	rPtr := unsafe.Pointer(&r)
-	wPtr := unsafe.Pointer(&w)
-	var syncMu sync.Mutex
 	return &evmap{
+		flipped: new(uint64),
 		history: make(map[*uint64]uint64),
-		r:       &rPtr,
-		w:       &wPtr,
+		rmap:    make(datamap),
+		wmap:    make(datamap),
 		log:     make(datamap),
-		cond:    sync.NewCond(&syncMu),
 	}
 }
 
 // Reader registers a reader for the map.
 // The reader must be closed when no longer in use.
-// TODO right now a single reader must be used sync.
-// Multiple readers can be used concurrently.
 func (m *evmap) Reader() Reader {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -99,8 +98,10 @@ func (m *evmap) Reader() Reader {
 	epoch := new(uint64)
 	m.epoches = append(m.epoches, epoch)
 	rd := &reader{
-		epoch: epoch,
-		rmap:  m.r,
+		epoch:   epoch,
+		flipped: m.flipped,
+		rmap:    m.rmap,
+		wmap:    m.wmap,
 	}
 	return rd
 }
@@ -110,41 +111,64 @@ func (m *evmap) Reader() Reader {
 func (m *evmap) Store(key, value interface{}) {
 	defer m.swap()
 
-	m.mu.Lock()
-	w := *(*datamap)(atomic.LoadPointer(m.w))
-	w[key] = value
-	m.log[key] = value
-	m.mu.Unlock()
+	for {
+		m.mu.Lock()
+		if !atomic.CompareAndSwapUint64(&m.state, idle, writing) {
+			m.mu.Unlock()
+			continue
+		}
+
+		defer atomic.StoreUint64(&m.state, idle)
+
+		switch atomic.LoadUint64(m.flipped) {
+		case 0:
+			m.wmap[key] = value
+		default:
+			m.rmap[key] = value
+		}
+		m.log[key] = value
+		m.mu.Unlock()
+
+		return
+	}
 }
 
 // swap will not return before this or any concurrent swap is done.
 func (m *evmap) swap() {
-	if atomic.CompareAndSwapUint64(&m.state, idle, swapping) {
-		defer atomic.StoreUint64(&m.state, idle)
-		defer m.cond.Broadcast()
-
+	for {
 		m.mu.Lock()
-		newW := *(*datamap)(atomic.SwapPointer(m.r, atomic.SwapPointer(m.w, *m.r)))
+		if !atomic.CompareAndSwapUint64(&m.state, idle, swapping) {
+			m.mu.Unlock()
+			continue
+		}
 		m.mu.Unlock()
+
+		defer atomic.StoreUint64(&m.state, idle)
+
+		flipped := 0
+
+		if !atomic.CompareAndSwapUint64(m.flipped, 0, 1) {
+			atomic.StoreUint64(m.flipped, 0)
+		} else {
+			flipped = 1
+		}
 
 		m.wait()
 
 		m.mu.Lock()
 		for k, v := range m.log {
-			newW[k] = v
+			switch flipped {
+			case 0:
+				m.wmap[k] = v
+			case 1:
+				m.rmap[k] = v
+			}
 			delete(m.log, k)
 		}
 		m.mu.Unlock()
 
 		return
 	}
-
-	// Wait for concurrent swap to finish.
-	m.cond.L.Lock()
-	for atomic.LoadUint64(&m.state) == swapping {
-		m.cond.Wait()
-	}
-	m.cond.L.Unlock()
 }
 
 func (m *evmap) wait() {
