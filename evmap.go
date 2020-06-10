@@ -133,7 +133,6 @@ func (m *evmap) Store(key, value interface{}) {
 	}
 }
 
-// swap will not return before this or any concurrent swap is done.
 func (m *evmap) swap() {
 	for {
 		m.mu.Lock()
@@ -183,6 +182,9 @@ func (m *evmap) wait() {
 				return
 			}
 			for i, x := range m.epoches {
+				if x == nil {
+					continue
+				}
 				if _, ok := seen[x]; ok {
 					if len(seen) == len(m.epoches) {
 						// All readers are finished accessing the data referenced
