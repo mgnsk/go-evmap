@@ -66,7 +66,7 @@ const (
 )
 
 type evmap struct {
-	mu      sync.RWMutex
+	mu      sync.Mutex
 	epoches []*uint64
 	flipped *uint64
 	history map[*uint64]uint64
