@@ -1,4 +1,4 @@
-Non-blocking read-write map. The tradeoff exposed here is 2x the memory usage due to swapping between two maps.
+POC non-blocking read-write map. The tradeoff exposed here is 2x the memory usage due to swapping between two maps.
 
 The first initial version of "just getting it to work". Can't beat `sync.Map` and write performance is slow.
 
