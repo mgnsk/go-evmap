@@ -1,5 +1,7 @@
 POC non-blocking read-write map. The tradeoff exposed here is 2x the memory usage due to swapping between two maps.
 
+Inspired by: https://www.youtube.com/watch?v=s19G6n0UjsM
+
 The first initial version of "just getting it to work". Can't beat `sync.Map` and write performance is slow.
 
 Run benchmark with
