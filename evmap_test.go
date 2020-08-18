@@ -103,7 +103,6 @@ func BenchmarkEvMap(b *testing.B) {
 			m := New()
 			runBench(b, bc.name, bc.bgConcurrency, bc.bg(m), bc.bench(m), goBackground)
 			m = nil
-			runtime.GC()
 		}
 	})
 
@@ -151,7 +150,6 @@ func BenchmarkEvMap(b *testing.B) {
 				}
 			})
 			m = nil
-			runtime.GC()
 		}
 	})
 }
@@ -203,7 +201,6 @@ func BenchmarkMutexMap(b *testing.B) {
 			var mu sync.RWMutex
 			runBench(b, bc.name, bc.bgConcurrency, bc.bg(&mu, m), bc.bench(mu.RLocker(), m), goBackground)
 			m = nil
-			runtime.GC()
 		}
 	})
 
@@ -252,7 +249,6 @@ func BenchmarkMutexMap(b *testing.B) {
 			var mu sync.RWMutex
 			runBench(b, bc.name, bc.bgConcurrency, bc.bg(mu.RLocker(), m), bc.bench(&mu, m), goBackground)
 			m = nil
-			runtime.GC()
 		}
 	})
 }
@@ -300,7 +296,6 @@ func BenchmarkSyncMap(b *testing.B) {
 		} {
 			var m sync.Map
 			runBench(b, bc.name, bc.bgConcurrency, bc.bg(&m), bc.bench(&m), goBackground)
-			runtime.GC()
 		}
 	})
 
@@ -345,7 +340,6 @@ func BenchmarkSyncMap(b *testing.B) {
 		} {
 			var m sync.Map
 			runBench(b, bc.name, bc.bgConcurrency, bc.bg(&m), bc.bench(&m), goBackground)
-			runtime.GC()
 		}
 	})
 }
@@ -377,10 +371,13 @@ func runBench(b *testing.B, name string, bgConcurrency int, bg func(), bench fun
 
 	cancel()
 	wg.Wait()
+
+	runtime.GC()
 }
 
 func evMapSingleRead(m Map) benchmark {
 	return func(b *testing.B) {
+		b.ReportAllocs()
 		r := m.Reader()
 		defer r.Close()
 		var res interface{}
@@ -394,6 +391,7 @@ func evMapSingleRead(m Map) benchmark {
 
 func evMapMultiRead(m Map) benchmark {
 	return func(b *testing.B) {
+		b.ReportAllocs()
 		b.RunParallel(func(pb *testing.PB) {
 			r := m.Reader()
 			defer r.Close()
@@ -409,6 +407,7 @@ func evMapMultiRead(m Map) benchmark {
 
 func mutexMapSingleRead(mu sync.Locker, m datamap) benchmark {
 	return func(b *testing.B) {
+		b.ReportAllocs()
 		var res interface{}
 		var exists bool
 		for i := 0; i < b.N; i++ {
@@ -422,6 +421,7 @@ func mutexMapSingleRead(mu sync.Locker, m datamap) benchmark {
 
 func mutexMapMultiRead(mu sync.Locker, m datamap) benchmark {
 	return func(b *testing.B) {
+		b.ReportAllocs()
 		b.RunParallel(func(pb *testing.PB) {
 			var res interface{}
 			var exists bool
@@ -437,6 +437,7 @@ func mutexMapMultiRead(mu sync.Locker, m datamap) benchmark {
 
 func syncMapSingleRead(m *sync.Map) benchmark {
 	return func(b *testing.B) {
+		b.ReportAllocs()
 		var res interface{}
 		var exists bool
 		for i := 0; i < b.N; i++ {
@@ -448,6 +449,7 @@ func syncMapSingleRead(m *sync.Map) benchmark {
 
 func syncMapMultiRead(m *sync.Map) benchmark {
 	return func(b *testing.B) {
+		b.ReportAllocs()
 		b.RunParallel(func(pb *testing.PB) {
 			var res interface{}
 			var exists bool
@@ -461,6 +463,7 @@ func syncMapMultiRead(m *sync.Map) benchmark {
 
 func evMapSingleWrite(m Map) benchmark {
 	return func(b *testing.B) {
+		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
 			m.Store(nextKey(), "value")
 		}
@@ -469,6 +472,7 @@ func evMapSingleWrite(m Map) benchmark {
 
 func evMapMultiWrite(m Map) benchmark {
 	return func(b *testing.B) {
+		b.ReportAllocs()
 		b.RunParallel(func(pb *testing.PB) {
 			for pb.Next() {
 				m.Store(nextKey(), "value")
@@ -479,6 +483,7 @@ func evMapMultiWrite(m Map) benchmark {
 
 func mutexMapSingleWrite(mu sync.Locker, m datamap) benchmark {
 	return func(b *testing.B) {
+		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
 			mu.Lock()
 			m[nextKey()] = "value"
@@ -489,6 +494,7 @@ func mutexMapSingleWrite(mu sync.Locker, m datamap) benchmark {
 
 func mutexMapMultiWrite(mu sync.Locker, m datamap) benchmark {
 	return func(b *testing.B) {
+		b.ReportAllocs()
 		b.RunParallel(func(pb *testing.PB) {
 			for pb.Next() {
 				mu.Lock()
@@ -501,6 +507,7 @@ func mutexMapMultiWrite(mu sync.Locker, m datamap) benchmark {
 
 func syncMapSingleWrite(m *sync.Map) benchmark {
 	return func(b *testing.B) {
+		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
 			m.Store(nextKey(), "value")
 		}
@@ -509,6 +516,7 @@ func syncMapSingleWrite(m *sync.Map) benchmark {
 
 func syncMapMultiWrite(m *sync.Map) benchmark {
 	return func(b *testing.B) {
+		b.ReportAllocs()
 		b.RunParallel(func(pb *testing.PB) {
 			for pb.Next() {
 				m.Store(nextKey(), "value")

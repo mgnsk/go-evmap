@@ -112,9 +112,7 @@ func (m *evmap) Store(key, value interface{}) {
 	defer m.swap()
 
 	for {
-		m.mu.Lock()
 		if !atomic.CompareAndSwapUint64(&m.state, idle, writing) {
-			m.mu.Unlock()
 			continue
 		}
 
@@ -127,7 +125,6 @@ func (m *evmap) Store(key, value interface{}) {
 			m.rmap[key] = value
 		}
 		m.log[key] = value
-		m.mu.Unlock()
 
 		return
 	}
@@ -135,13 +132,9 @@ func (m *evmap) Store(key, value interface{}) {
 
 func (m *evmap) swap() {
 	for {
-		m.mu.Lock()
 		if !atomic.CompareAndSwapUint64(&m.state, idle, swapping) {
-			m.mu.Unlock()
 			continue
 		}
-		m.mu.Unlock()
-
 		defer atomic.StoreUint64(&m.state, idle)
 
 		flipped := 0
@@ -154,7 +147,6 @@ func (m *evmap) swap() {
 
 		m.wait()
 
-		m.mu.Lock()
 		for k, v := range m.log {
 			switch flipped {
 			case 0:
@@ -164,7 +156,6 @@ func (m *evmap) swap() {
 			}
 			delete(m.log, k)
 		}
-		m.mu.Unlock()
 
 		return
 	}
