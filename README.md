@@ -7,6 +7,8 @@ The first initial version of "just getting it to work". Can't beat `sync.Map` an
 Run benchmark with
 `$ docker run --rm --mount type=bind,source="$(pwd)",target=/evmap -w /evmap golang:alpine go test -count=1 -v -run=. -bench=. ./...`
 
+Passes the race detector when run as `go test -race -count=1 -v -run=. -bench=. ./...` albeit slowly.
+
 ```
 === RUN   TestMap
 --- PASS: TestMap (0.00s)
