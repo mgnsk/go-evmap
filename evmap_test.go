@@ -11,6 +11,10 @@ import (
 	"time"
 )
 
+func init() {
+	rand.Seed(time.Now().UnixNano())
+}
+
 func TestMap(t *testing.T) {
 	read := func(r Reader, key string, expectExists bool) {
 		val, exists := r.Load(key)
@@ -22,7 +26,7 @@ func TestMap(t *testing.T) {
 		}
 	}
 
-	m := New()
+	m := New(0)
 
 	// Take a reader to the map.
 	r := m.Reader()
@@ -59,9 +63,7 @@ func nextKey() int {
 
 type benchmark func(b *testing.B)
 
-func BenchmarkEvMap(b *testing.B) {
-	rand.Seed(time.Now().UnixNano())
-
+func BenchmarkEvMapReadSync(b *testing.B) {
 	store := func(m Map) func() {
 		return func() {
 			m.Store(nextKey(), "value")
@@ -100,63 +102,60 @@ func BenchmarkEvMap(b *testing.B) {
 				bench:         evMapMultiRead,
 			},
 		} {
-			m := New()
+			m := New(0)
 			runBench(b, bc.name, bc.bgConcurrency, bc.bg(m), bc.bench(m), goBackground)
-			m = nil
-		}
-	})
-
-	b.Run("write", func(b *testing.B) {
-		for _, bc := range []struct {
-			name          string
-			bgConcurrency int
-			bench         func(m Map) benchmark
-		}{
-			{
-				name:          "single writer single reader",
-				bgConcurrency: 1,
-				bench:         evMapSingleWrite,
-			},
-			{
-				name:          "multi writer single reader",
-				bgConcurrency: 1,
-				bench:         evMapMultiWrite,
-			},
-			{
-				name:          "single writer multi reader",
-				bgConcurrency: backgroundConcurrency,
-				bench:         evMapSingleWrite,
-			},
-			{
-				name:          "multi writer multi reader",
-				bgConcurrency: backgroundConcurrency,
-				bench:         evMapMultiWrite,
-			},
-		} {
-			m := New()
-			// TODO a mess of trying to fit a generic test
-			readers := make([]Reader, bc.bgConcurrency)
-			for i := 0; i < bc.bgConcurrency; i++ {
-				readers[i] = m.Reader()
-			}
-
-			runBench(b, bc.name, bc.bgConcurrency, nil, bc.bench(m), func(ctx context.Context, _ int, done, _ func()) {
-				for _, r := range readers {
-					r := r
-					goBackground(ctx, 1, done, func() {
-						res, _ := r.Load(nextKey())
-						_ = res
-					})
-				}
-			})
 			m = nil
 		}
 	})
 }
 
-func BenchmarkMutexMap(b *testing.B) {
-	rand.Seed(time.Now().UnixNano())
+func BenchmarkEvMapRead100Millisecond(b *testing.B) {
+	store := func(m Map) func() {
+		return func() {
+			m.Store(nextKey(), "value")
+		}
+	}
 
+	b.Run("read", func(b *testing.B) {
+		for _, bc := range []struct {
+			name          string
+			bgConcurrency int
+			bg            func(m Map) func()
+			bench         func(m Map) benchmark
+		}{
+			{
+				name:          "single writer single reader",
+				bgConcurrency: 1,
+				bg:            store,
+				bench:         evMapSingleRead,
+			},
+			{
+				name:          "multi writer single reader",
+				bgConcurrency: backgroundConcurrency,
+				bg:            store,
+				bench:         evMapSingleRead,
+			},
+			{
+				name:          "single writer multi reader",
+				bgConcurrency: 1,
+				bg:            store,
+				bench:         evMapMultiRead,
+			},
+			{
+				name:          "multi writer multi reader",
+				bgConcurrency: backgroundConcurrency,
+				bg:            store,
+				bench:         evMapMultiRead,
+			},
+		} {
+			m := New(100 * time.Millisecond)
+			runBench(b, bc.name, bc.bgConcurrency, bc.bg(m), bc.bench(m), goBackground)
+			m = nil
+		}
+	})
+}
+
+func BenchmarkMutexMapRead(b *testing.B) {
 	store := func(mu sync.Locker, m datamap) func() {
 		return func() {
 			mu.Lock()
@@ -203,7 +202,152 @@ func BenchmarkMutexMap(b *testing.B) {
 			m = nil
 		}
 	})
+}
 
+func BenchmarkSyncMapRead(b *testing.B) {
+	store := func(m *sync.Map) func() {
+		return func() {
+			m.Store(nextKey(), "value")
+		}
+	}
+
+	b.Run("read", func(b *testing.B) {
+		for _, bc := range []struct {
+			name          string
+			bgConcurrency int
+			bg            func(*sync.Map) func()
+			bench         func(*sync.Map) benchmark
+		}{
+			{
+				name:          "single writer single reader",
+				bgConcurrency: 1,
+				bg:            store,
+				bench:         syncMapSingleRead,
+			},
+			{
+				name:          "multi writer single reader",
+				bgConcurrency: backgroundConcurrency,
+				bg:            store,
+				bench:         syncMapSingleRead,
+			},
+			{
+				name:          "single writer multi reader",
+				bgConcurrency: 1,
+				bg:            store,
+				bench:         syncMapMultiRead,
+			},
+			{
+				name:          "multi writer multi reader",
+				bgConcurrency: backgroundConcurrency,
+				bg:            store,
+				bench:         syncMapMultiRead,
+			},
+		} {
+			var m sync.Map
+			runBench(b, bc.name, bc.bgConcurrency, bc.bg(&m), bc.bench(&m), goBackground)
+		}
+	})
+}
+
+func BenchmarkEvMapWriteSync(b *testing.B) {
+	b.Run("write", func(b *testing.B) {
+		for _, bc := range []struct {
+			name          string
+			bgConcurrency int
+			bench         func(m Map) benchmark
+		}{
+			{
+				name:          "single writer single reader",
+				bgConcurrency: 1,
+				bench:         evMapSingleWrite,
+			},
+			{
+				name:          "multi writer single reader",
+				bgConcurrency: 1,
+				bench:         evMapMultiWrite,
+			},
+			{
+				name:          "single writer multi reader",
+				bgConcurrency: backgroundConcurrency,
+				bench:         evMapSingleWrite,
+			},
+			{
+				name:          "multi writer multi reader",
+				bgConcurrency: backgroundConcurrency,
+				bench:         evMapMultiWrite,
+			},
+		} {
+			m := New(0)
+			// TODO a mess of trying to fit a generic test
+			readers := make([]Reader, bc.bgConcurrency)
+			for i := 0; i < bc.bgConcurrency; i++ {
+				readers[i] = m.Reader()
+			}
+
+			runBench(b, bc.name, bc.bgConcurrency, nil, bc.bench(m), func(ctx context.Context, _ int, done, _ func()) {
+				for _, r := range readers {
+					r := r
+					goBackground(ctx, 1, done, func() {
+						res, _ := r.Load(nextKey())
+						_ = res
+					})
+				}
+			})
+			m = nil
+		}
+	})
+}
+
+func BenchmarkEvMapWrite100Millisecond(b *testing.B) {
+	b.Run("write", func(b *testing.B) {
+		for _, bc := range []struct {
+			name          string
+			bgConcurrency int
+			bench         func(m Map) benchmark
+		}{
+			{
+				name:          "single writer single reader",
+				bgConcurrency: 1,
+				bench:         evMapSingleWrite,
+			},
+			{
+				name:          "multi writer single reader",
+				bgConcurrency: 1,
+				bench:         evMapMultiWrite,
+			},
+			{
+				name:          "single writer multi reader",
+				bgConcurrency: backgroundConcurrency,
+				bench:         evMapSingleWrite,
+			},
+			{
+				name:          "multi writer multi reader",
+				bgConcurrency: backgroundConcurrency,
+				bench:         evMapMultiWrite,
+			},
+		} {
+			m := New(100 * time.Millisecond)
+			// TODO a mess of trying to fit a generic test
+			readers := make([]Reader, bc.bgConcurrency)
+			for i := 0; i < bc.bgConcurrency; i++ {
+				readers[i] = m.Reader()
+			}
+
+			runBench(b, bc.name, bc.bgConcurrency, nil, bc.bench(m), func(ctx context.Context, _ int, done, _ func()) {
+				for _, r := range readers {
+					r := r
+					goBackground(ctx, 1, done, func() {
+						res, _ := r.Load(nextKey())
+						_ = res
+					})
+				}
+			})
+			m = nil
+		}
+	})
+}
+
+func BenchmarkMutexMapWrite(b *testing.B) {
 	load := func(mu sync.Locker, m datamap) func() {
 		return func() {
 			mu.Lock()
@@ -253,52 +397,7 @@ func BenchmarkMutexMap(b *testing.B) {
 	})
 }
 
-func BenchmarkSyncMap(b *testing.B) {
-	rand.Seed(time.Now().UnixNano())
-
-	store := func(m *sync.Map) func() {
-		return func() {
-			m.Store(nextKey(), "value")
-		}
-	}
-
-	b.Run("read", func(b *testing.B) {
-		for _, bc := range []struct {
-			name          string
-			bgConcurrency int
-			bg            func(*sync.Map) func()
-			bench         func(*sync.Map) benchmark
-		}{
-			{
-				name:          "single writer single reader",
-				bgConcurrency: 1,
-				bg:            store,
-				bench:         syncMapSingleRead,
-			},
-			{
-				name:          "multi writer single reader",
-				bgConcurrency: backgroundConcurrency,
-				bg:            store,
-				bench:         syncMapSingleRead,
-			},
-			{
-				name:          "single writer multi reader",
-				bgConcurrency: 1,
-				bg:            store,
-				bench:         syncMapMultiRead,
-			},
-			{
-				name:          "multi writer multi reader",
-				bgConcurrency: backgroundConcurrency,
-				bg:            store,
-				bench:         syncMapMultiRead,
-			},
-		} {
-			var m sync.Map
-			runBench(b, bc.name, bc.bgConcurrency, bc.bg(&m), bc.bench(&m), goBackground)
-		}
-	})
-
+func BenchmarkSyncMapWrite(b *testing.B) {
 	load := func(m *sync.Map) func() {
 		return func() {
 			val, _ := m.Load(nextKey())
@@ -378,6 +477,7 @@ func runBench(b *testing.B, name string, bgConcurrency int, bg func(), bench fun
 func evMapSingleRead(m Map) benchmark {
 	return func(b *testing.B) {
 		b.ReportAllocs()
+		b.ResetTimer()
 		r := m.Reader()
 		defer r.Close()
 		var res interface{}
@@ -392,6 +492,7 @@ func evMapSingleRead(m Map) benchmark {
 func evMapMultiRead(m Map) benchmark {
 	return func(b *testing.B) {
 		b.ReportAllocs()
+		b.ResetTimer()
 		b.RunParallel(func(pb *testing.PB) {
 			r := m.Reader()
 			defer r.Close()
@@ -408,6 +509,7 @@ func evMapMultiRead(m Map) benchmark {
 func mutexMapSingleRead(mu sync.Locker, m datamap) benchmark {
 	return func(b *testing.B) {
 		b.ReportAllocs()
+		b.ResetTimer()
 		var res interface{}
 		var exists bool
 		for i := 0; i < b.N; i++ {
@@ -422,6 +524,7 @@ func mutexMapSingleRead(mu sync.Locker, m datamap) benchmark {
 func mutexMapMultiRead(mu sync.Locker, m datamap) benchmark {
 	return func(b *testing.B) {
 		b.ReportAllocs()
+		b.ResetTimer()
 		b.RunParallel(func(pb *testing.PB) {
 			var res interface{}
 			var exists bool
@@ -438,6 +541,7 @@ func mutexMapMultiRead(mu sync.Locker, m datamap) benchmark {
 func syncMapSingleRead(m *sync.Map) benchmark {
 	return func(b *testing.B) {
 		b.ReportAllocs()
+		b.ResetTimer()
 		var res interface{}
 		var exists bool
 		for i := 0; i < b.N; i++ {
@@ -450,6 +554,7 @@ func syncMapSingleRead(m *sync.Map) benchmark {
 func syncMapMultiRead(m *sync.Map) benchmark {
 	return func(b *testing.B) {
 		b.ReportAllocs()
+		b.ResetTimer()
 		b.RunParallel(func(pb *testing.PB) {
 			var res interface{}
 			var exists bool
@@ -464,6 +569,7 @@ func syncMapMultiRead(m *sync.Map) benchmark {
 func evMapSingleWrite(m Map) benchmark {
 	return func(b *testing.B) {
 		b.ReportAllocs()
+		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			m.Store(nextKey(), "value")
 		}
@@ -473,6 +579,7 @@ func evMapSingleWrite(m Map) benchmark {
 func evMapMultiWrite(m Map) benchmark {
 	return func(b *testing.B) {
 		b.ReportAllocs()
+		b.ResetTimer()
 		b.RunParallel(func(pb *testing.PB) {
 			for pb.Next() {
 				m.Store(nextKey(), "value")
@@ -484,6 +591,7 @@ func evMapMultiWrite(m Map) benchmark {
 func mutexMapSingleWrite(mu sync.Locker, m datamap) benchmark {
 	return func(b *testing.B) {
 		b.ReportAllocs()
+		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			mu.Lock()
 			m[nextKey()] = "value"
@@ -495,6 +603,7 @@ func mutexMapSingleWrite(mu sync.Locker, m datamap) benchmark {
 func mutexMapMultiWrite(mu sync.Locker, m datamap) benchmark {
 	return func(b *testing.B) {
 		b.ReportAllocs()
+		b.ResetTimer()
 		b.RunParallel(func(pb *testing.PB) {
 			for pb.Next() {
 				mu.Lock()
@@ -508,6 +617,7 @@ func mutexMapMultiWrite(mu sync.Locker, m datamap) benchmark {
 func syncMapSingleWrite(m *sync.Map) benchmark {
 	return func(b *testing.B) {
 		b.ReportAllocs()
+		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			m.Store(nextKey(), "value")
 		}
@@ -517,6 +627,7 @@ func syncMapSingleWrite(m *sync.Map) benchmark {
 func syncMapMultiWrite(m *sync.Map) benchmark {
 	return func(b *testing.B) {
 		b.ReportAllocs()
+		b.ResetTimer()
 		b.RunParallel(func(pb *testing.PB) {
 			for pb.Next() {
 				m.Store(nextKey(), "value")
