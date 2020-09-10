@@ -477,11 +477,11 @@ func runBench(b *testing.B, name string, bgConcurrency int, bg func(), bench fun
 func evMapSingleRead(m Map) benchmark {
 	return func(b *testing.B) {
 		b.ReportAllocs()
-		b.ResetTimer()
 		r := m.Reader()
 		defer r.Close()
 		var res interface{}
 		var exists bool
+		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			res, exists = r.Load(nextKey())
 		}
@@ -509,9 +509,9 @@ func evMapMultiRead(m Map) benchmark {
 func mutexMapSingleRead(mu sync.Locker, m datamap) benchmark {
 	return func(b *testing.B) {
 		b.ReportAllocs()
-		b.ResetTimer()
 		var res interface{}
 		var exists bool
+		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			mu.Lock()
 			res, exists = m[nextKey()]
@@ -541,9 +541,9 @@ func mutexMapMultiRead(mu sync.Locker, m datamap) benchmark {
 func syncMapSingleRead(m *sync.Map) benchmark {
 	return func(b *testing.B) {
 		b.ReportAllocs()
-		b.ResetTimer()
 		var res interface{}
 		var exists bool
+		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			res, exists = m.Load(nextKey())
 		}
