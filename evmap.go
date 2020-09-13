@@ -1,6 +1,7 @@
 package evmap
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -8,6 +9,7 @@ import (
 )
 
 // Map is a lock-free eventually consistent map.
+// Writes do not block reads but block other writes.
 type Map interface {
 	Reader() Reader
 	Store(key, value interface{})
@@ -21,19 +23,15 @@ type Reader interface {
 
 type datamap map[interface{}]interface{}
 
-const (
-	idle uint64 = iota
-	writing
-)
-
 type evmap struct {
 	refreshRate time.Duration
-	lastRefresh time.Time
+	initRefresh sync.Once
 	state       uint64
 	readers     sync.Map
 	lmap        *unsafe.Pointer
 	rmap        *unsafe.Pointer
 	log         datamap
+	mu          sync.Mutex
 }
 
 // New creates an empty concurrent map.
@@ -64,29 +62,42 @@ func (m *evmap) Reader() Reader {
 
 // Store a value into the map.
 func (m *evmap) Store(key, value interface{}) {
-	for {
-		if !atomic.CompareAndSwapUint64(&m.state, idle, writing) {
-			continue
-		}
-		defer atomic.StoreUint64(&m.state, idle)
-		if m.refreshRate == 0 {
-			defer m.swap()
-		} else if now := time.Now(); now.Sub(m.lastRefresh) > m.refreshRate {
-			defer m.swap()
-			m.lastRefresh = now
-		}
-		writeMap := *(*datamap)(atomic.LoadPointer(m.rmap))
-		writeMap[key] = value
-		m.log[key] = value
-		return
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	writeMap := *(*datamap)(atomic.LoadPointer(m.rmap))
+	writeMap[key] = value
+	m.log[key] = value
+
+	if m.refreshRate == 0 {
+		m.refresh()
+	} else {
+		m.initRefresh.Do(func() {
+			go m.startRefresh(context.TODO())
+		})
 	}
 }
 
-func (m *evmap) swap() {
-	writeMap := *(*datamap)(atomic.SwapPointer(m.lmap, atomic.SwapPointer(m.rmap, *m.lmap)))
+func (m *evmap) startRefresh(ctx context.Context) {
+	ticker := time.NewTicker(m.refreshRate)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			m.mu.Lock()
+			m.refresh()
+			m.mu.Unlock()
+		}
+	}
+}
+
+func (m *evmap) refresh() {
+	newRight := *(*datamap)(atomic.SwapPointer(m.lmap, atomic.SwapPointer(m.rmap, *m.lmap)))
 	m.wait()
 	for k, v := range m.log {
-		writeMap[k] = v
+		newRight[k] = v
 		delete(m.log, k)
 	}
 	return

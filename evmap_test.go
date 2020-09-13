@@ -41,12 +41,12 @@ func TestMap(t *testing.T) {
 }
 
 // Number of unique keys.
-const n = 100
+const n = 1000
 
 func genKeys() []int {
 	keys := make([]int, n)
 	for i := 0; i < n; i++ {
-		keys[i] = i
+		keys[i] = rand.Intn(n)
 	}
 	return keys
 }
